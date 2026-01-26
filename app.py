@@ -15,9 +15,16 @@ from wordcloud import WordCloud, STOPWORDS
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Spotify Recommender & Analysis", layout="wide")
 
-# Vos identifiants Spotify (Attention: ne les partagez pas publiquement)
-CLIENT_ID = "0c44dd32dc264ffc925263348f8df5f1"
-CLIENT_SECRET = "33895e274f454993b57d91ccf2753e01"
+CLIENT_ID = st.secrets["spotify"]["client_id"]
+CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
+                                      
+try:
+    auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
+    sp = spotipy.Spotify(auth_manager=auth_manager)
+except Exception as e:
+    st.error(f"Erreur de connexion à l'API Spotify : {e}")
+    st.stop()
+
 
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=CLIENT_ID, 
                                                            client_secret=CLIENT_SECRET))
@@ -57,24 +64,38 @@ number_cols = ['valence', 'year', 'acousticness', 'danceability', 'duration_ms',
 
 def find_song(name, year):
     song_data = defaultdict()
-    results = sp.search(q= 'track: {} year: {}'.format(name,year), limit=1)
-    if results['tracks']['items'] == []:
-        return None
+    try:
+        results = sp.search(q= 'track: {} year: {}'.format(name,year), limit=1)
+        if results['tracks']['items'] == []:
+            return None
+        
+        results = results['tracks']['items'][0]
+        track_id = results['id']
+        
+        
+        audio_features = sp.audio_features(track_id)
+        if not audio_features or audio_features[0] is None:
+            return None
+            
+        audio_features = audio_features[0]
+
+        song_data['name'] = [name]
+        song_data['year'] = [year]
+        song_data['explicit'] = [int(results['explicit'])]
+        song_data['duration_ms'] = [results['duration_ms']]
+        song_data['popularity'] = [results['popularity']]
+
+        for key, value in audio_features.items():
+            song_data[key] = value
+            
+        return pd.DataFrame(song_data)
     
-    results = results['tracks']['items'][0]
-    track_id = results['id']
-    audio_features = sp.audio_features(track_id)[0]
-
-    song_data['name'] = [name]
-    song_data['year'] = [year]
-    song_data['explicit'] = [int(results['explicit'])]
-    song_data['duration_ms'] = [results['duration_ms']]
-    song_data['popularity'] = [results['popularity']]
-
-    for key, value in audio_features.items():
-        song_data[key] = value
-    return pd.DataFrame(song_data)
-
+    except spotipy.exceptions.SpotifyException as e:
+        st.warning(f"Erreur API Spotify (limite atteinte ou clé invalide) : {e}")
+        return None
+    except Exception as e:
+        st.warning(f"Erreur inattendue lors de la recherche : {e}")
+        return None
 def get_song_data(song, spotify_data):
     try:
         song_data = spotify_data[(spotify_data['name'] == song['name']) & (spotify_data['year'] == song['year'])].iloc[0]
